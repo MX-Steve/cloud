@@ -1,0 +1,79 @@
+CMD
+ENTRYPOINT
+  906  cd docker-training/
+  907  ls
+  908  cd centos7/
+  909  ls
+  910  cat Dockerfile 
+  911  vim Dockerfile
+  912  docker build -t csphere/centos:7.1 .
+  913  docker run -d --name base csphere/centos:7.1
+  914  docker ps
+  915  cd ..
+  916  ls
+  917  cd php-fpm/
+  918  ls
+  919  docker build -t csphere/php-fpm:5.4 .
+  920  docker run -d -p 8080:80 --name website csphere/php-fpm:5.4
+  921  docker ps
+  922  ifconfig eth1
+  923  ifconfig eth0
+  924  curl 192.168.1.10:8080
+  925  curl 192.168.1.10:8080/info.php
+  926  docker ps
+  927  docker exec -it website /bin/bash
+  928  docker ps
+  929  curl 192.168.1.10:8080/info.php
+  930  ls
+  931  cd ..
+  932  ls
+  933  cd mysql/
+  934  ls
+  935  vim Dockerfile 
+  936  ls /var/lib/mysql
+  938  cd scripts/
+  940  vim start 
+  942  cd ..
+  943  docker build -t csphere/mysql:5.5 .
+  944  docker run -d -p 3306:3306 --name dbserver csphere/mysql:5.5
+  945  docker ps
+  946  docker exec -it dbserver /bin/bash
+  947  docker stop fd68
+  948  docker rm fd68
+  949  docker run -d -p 3306:3306 -v /var/lib/docker/vfs/dir/mydata:/var/lib/mysql --name dbserver csphere/mysql:5.5
+  950  docker ps
+  951  docker exec -it dbserver /bin/bash
+  952  ls /var/lib/docker/vfs/dir/mydata/
+  953  pwd
+  954  docker stop dbserver
+  955  docker rm  dbserver
+  956  ls /var/lib/docker/vfs/dir/mydata/
+  957  docker run -d -p 3306:3306 -v /var/lib/docker/vfs/dir/mydata:/var/lib/mysql --name dbserver csphere/mysql:5.5
+  958  docker exec -it dbserver /bin/bash
+  959  docker ps
+  961  curl 192.168.1.10:8080/info.php
+  963  cd ..
+  965  cd wordpress/
+  967  vim Dockerfile 
+  969  vim .dockerignore 
+  970  vim init.sh 
+  971  docker build -t csphere/wordpress:4.2 .
+  972  docker ps
+  973  ifconfig eth0
+  974  docker run -d -p 80:80 --name wordpress -e "WORDPRESS_DB_HOST=192.168.1.10" -e WORDPRESS_DB_USER=admin -e WORDPRESS_DB_PASSWORD=csphere2015 csphere/wordpress:4.2
+  975  docker ps
+  977  curl 192.168.1.10
+  979  cd ..
+  981  mkdir test
+  982  cd test/
+  983  vim Dockerfile
+  984  docker build -t csphere/cmd:0.1 .
+  985  docker run -it --rm csphere/cmd:0.1
+  986  docker run -it --rm csphere/cmd:0.1 /bin/bash
+  987  vim Dockerfile
+  989  docker build -t csphere/ent:0.1 .
+  990  docker run -it --rm csphere/cmd:0.1
+  991  docker run -it --rm csphere/cmd:0.1 /bin/bash
+  992  vim Dockerfile 
+  993  docker run -it --rm --entrypoint=/bin/bash csphere/cmd:0.1 
+
