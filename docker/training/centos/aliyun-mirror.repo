@@ -1,5 +1,5 @@
 [base]
 name=centos7
-baseurl=https://mirrors.aliyun.com/centos/7/
+baseurl=https://mirrors.aliyun.com/centos/7/os/x86_64/
 enabled=1
 gpgcheck=0
