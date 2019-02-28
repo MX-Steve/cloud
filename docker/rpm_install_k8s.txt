@@ -1,0 +1,264 @@
+使用RPM安装k8s
+一、k8s集群主机共同操作
+	1.地址规划：[/etc/hosts]
+		192.168.1.100	k8s-master [静态主机名]
+		192.168.1.100	etcd
+		192.168.1.100	registry
+		192.168.1.101	k8s-node-1 [静态主机名]
+		192.168.1.102	k8s-node-2 [静态主机名]
+	2.关闭防火墙和selinux
+		systemctl stop firewalld && systemctl disabled firewalld
+		vim /etc/selinux/config
+			SELINUX=disabled
+		重启生效
+	3.安装源epel-release
+		yum -y install  epel-release
+
+二、部署master
+	1.使用yum安装etcd
+	  etcd服务作为k8s集群的主数据库，在安装k8s各服务之前需要先安装和启动
+		yum -y install etcd
+	2.编辑/etc/etcd/etcd.conf文件(修改加粗部分3行)
+		#[Member]
+		#ETCD_CORS=""
+		ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
+		#ETCD_WAL_DIR=""
+		#ETCD_LISTEN_PEER_URLS="http://localhost:2380"
+		ETCD_LISTEN_CLIENT_URLS="http://0.0.0.0:2379,http://0.0.0.0:4001"	***
+		#ETCD_MAX_SNAPSHOTS="5"
+		#ETCD_MAX_WALS="5"
+		ETCD_NAME="master"							***
+		#ETCD_SNAPSHOT_COUNT="100000"
+		#ETCD_HEARTBEAT_INTERVAL="100"
+		#ETCD_ELECTION_TIMEOUT="1000"
+		#ETCD_QUOTA_BACKEND_BYTES="0"
+		#ETCD_MAX_REQUEST_BYTES="1572864"
+		#ETCD_GRPC_KEEPALIVE_MIN_TIME="5s"
+		#ETCD_GRPC_KEEPALIVE_INTERVAL="2h0m0s"
+		#ETCD_GRPC_KEEPALIVE_TIMEOUT="20s"
+
+		#[Clustering]
+		#ETCD_INITIAL_ADVERTISE_PEER_URLS="http://localhost:2380"
+		ETCD_ADVERTISE_CLIENT="http://etcd:2379,http://etcd:4001"		***
+	3.启动并验证状态
+		systemctl start etcd
+	4.测试etcd数据的可用性
+		etcdctl set testdir/testkey0 0
+		etcdctl get testdir/testkey0
+		etcdctl -C http://etcd:4001 cluster-health
+			... health ...
+		etcdctl -C http://etcd:4001 cluster-health
+			... health ...
+		
+三、安装docker
+	yum -y install docker
+	配置docker配置文件，使允许从registry中拉取镜像
+	vim /etc/sysconfig/docker
+		#/etc/sysconfig/docker
+		# modify these options if you want to change the way the docker daemon runs 
+		OPTIONS='--selinux-enabled --log-driver=journald --signature-verification=false'
+		if [-z "${DOCKER_CERT_PATH}"];then
+			DOCKER_CERT_PATH=/etc/docker
+		fi
+		OPTIONS="--insecure-registry registry:5000"
+	设置开机自启并启动服务
+		systemctl enable docker && systemctl start docker
+
+四、安装kubernetes
+	1.安装kubernetes
+		yum -y install kubernetes
+	2.配置并启动kubernetes
+		在kubernetes master上需要运行以下组件：
+			kubernetes API Server
+			kubernetes Controller Manager
+			kubernetes Scheduler
+		相应的要改以下几个配置中的部分信息：
+		vim /etc/kubernetes/apiserver
+			###
+			# kubernetes system config
+			#
+			# the following values are used to configure the kube-apiserver
+			#
+			# the address on the local server to listen to.
+			KUBE_API_ADDRESS="--insecure-bind-address=0.0.0.0"		***
+
+			# the port on the local server to listen to.
+			KUBE_API_PORT="--port=8080"					***
+			
+			# port minions listen on
+			# KUBELET_PORT="--kubelet-port=10250"
+
+			# comma separated list of nodes in the etcd cluster
+			KUBE_ETCD_SERVERS="--etcd-servers=http://etcd:2379"		***
+
+			# address range to use for services
+			KUBE_SERVICE_ADDRESSES="--service-cluster-ip-range=10.254.0.0/16"
+
+			# default admission control policies
+			#KUBE_ADMISSION_CONTROL="--admission-control=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota"
+			KUBE_ADMISSION_CONTROL="--admission-control=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ResourceQuota"							***
+
+			# add your own!
+			KUBE_API_ARGS=""
+		vim /etc/kubernetes/config
+			###
+			# kubernetes system config
+			#
+			# the following values are used to configure various aspects of all kubernetes services, including
+			#	kube-apiserver.service
+			#	kube-controller-manager.service
+			#	kube-scheduler.service
+			#	kubelet.service
+			#	kube-proxy.service
+			#logging to stderr means we get it in the systemd journal 
+			KUBE_LOGTOSTDERR="--logtostderr=true"
+
+			# journal mesage level , 0 is debug
+			KUBE_LOG_LEVEL="--V=0"
+
+			# should this cluster be allowed to run privileged docker containers
+			KUBE_ALLOW_PRIV="--alow-privileged=false"
+
+			# how the controller-manager,scheduler , and proxy find the apiserver
+			KUBE_MASTER="--master=http://k8s-master:8080"							***
+	3.启动服务并设置开机自启
+		systemctl enable kube-apiserver.service && systemctl start kube-apiserver.service
+		systemctl enable kube-controller-manager.service && systemctl start kube-controller-manager.service
+		systemctl enable kube-scheduler.service && systemctl start kube-scheduler.service
+
+五、部署node：
+	1.安装配置启动docker(两台node一样)
+		yum -y install docker
+		vim /etc/sysconfig/docker
+			#/etc/sysconfig/docker
+			# modify these options if you want to change the way the docker daemon runs 
+			OPTIONS='--selinux-enabled --log-driver=journald --signature-verification=false'
+			if [-z "${DOCKER_CERT_PATH}"];then
+				DOCKER_CERT_PATH=/etc/docker
+			fi
+			OPTIONS="--insecure-registry registry:5000"
+		设置开机自启并启动服务
+			systemctl enable docker && systemctl start docker
+
+	2.安装配置启动kubernetes(两台node一样)
+		1.安装kubernetes
+			yum -y install kubernetes
+		2.配置并启动kubernetes
+			在kubernetes上需要运行以下组件：
+				kubelet
+				kubernetes proxy
+			vim /etc/kubernetes/config
+				###
+				# kubernetes system config
+				#
+				# the following values are used to configure various aspects of all
+				# kubernetes services , including
+				#
+				#	kube-apiserver.service
+				#	kube-controller-manager.service
+				#	kube-scheduler.service
+				#	kubelet.service
+				# logging to stderr means we get it in the systemd journal 
+				KUBE_LOGTOSTDERR="--logtostderr=true"
+
+				# journal message level, 0 is debug
+				KUBE_LOG_LEVEL="--v=0"
+
+				# should this cluster be allowed to run privileged docker containers
+				KUBE_ALLOW_PRIV="--allow-privileged=false"
+
+				# How the controller-manager, scheduler, and proxy find the apiserver
+				KUBE_MASTER="--master=http://k8s-master:8080"					***
+
+			vim /etc/kubernetes/kubelet
+				###
+				# kubernetes kubelet (minion) config
+				# the address for the info server to serve on (set to 0.0.0.0 or "" for all interfaces)
+				KUBELET_ADDRESS="--address=0.0.0.0"						***
+
+				# the port for the info server to serve on
+				# KUBELET_PORT="--port=10250"
+
+				# you may leave this blank to use the actual hostname
+				KUBELET_HOSTNAME="--hostname-override=k8s-node-1"				***
+
+				# location of the api-server
+				KUBELET_API_SERVER="--api-servers=http://k8s-master:8080"			***
+
+				# pod infrastructure container
+				KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image=registry.access.redhat.com/rhel7/pod-infrastructure:latest"
+
+				# add your own!
+				KUBELET_ARGS=""
+			
+			启动服务并设置开机自启动
+				systemctl start kubelet.service && systemctl enable kubelet.service
+				systemctl start kube-proxy.service && systemctl enable kube-proxy.service
+
+			查看状态：
+				在master上查看node已经node状态
+				kubectl -s http://k8s-master:8080 get node
+					NAME		STATUS		AGE
+					k8s-node-1	Ready		3m
+					k8s-node-2	Ready		3m
+				kubectl get nodes
+					NAME		STATUS		AGE
+					k8s-node-1	Ready		3m
+					k8s-node-2	Ready		3m
+
+六、创建覆盖网络——flannel
+	1.安装flannel
+		在master、node上均执行如下命令，进行安装
+		yum -y install flannel
+	2.配置flannel
+		在master、node上均执行
+		vim /etc/sysconfig/flanneld
+			# flanneld configuration options
+			# etcd url location. point this to the server where etcd runs
+			FLANNEL_ETCD_ENDPOINTS="http://etcd:2379"					***
+
+			# etcd config key . this is the configuration key that flannel requeries 
+			# for address range assignment
+			FLANNEL_ETCD_PREFIX="/automic.io/network"
+
+			# any additional options that you want to pass
+			# FLANNEL_OPTIONS=""
+	3.配置etcd中关于flannel的key [描述]
+		flannel使用etcd进行配置，来保证多个flannel实例之间的配置一致性，所以需要在etcd上进行如下配置：
+		（'/atomic.io/network/config'这个key与上文/etc/sysconfig/flanneld中的配置项FLANNEL_ETCD_PREFIX是相对应的，错误的话启动就会出错）
+
+		master	10.0.0.0
+		node1	10.18.0.0
+		node2	10.17.0.0
+		10.0.0.0
+		10.51.0.0
+	4.管理员配置flannel使用的network，并将配置保存在etcd中：
+		master]# etcdctl mk /atomic.io/network/config '{"Network":"172.17.0.0/16"}'
+	
+	5.网络刷新：[如果网络有问题的时候，可以刷新]
+		master]# etcdctl update /atomic.io/network/config '{"Network":"172.17.0.0/16"}'
+	6.在每个minion节点上，flannel启动。它从etcd中获取network配置，并为本节点产生一个subnet，也保存在etcd中，并且产生/run/flannel/subnet.env 文件：
+		FLANNEL_NETWORK=172.17.0.0/16	#这是全局的flannel network
+		FLANNEL_SUBNET=172.17.78.1/24	#这是本节点flannel subnet
+		FLANNEL_MTU=1400		#本节点上flannel mtu
+		FLANNEL_IPMASQ=false
+	7.启动
+		启动flannel后，需要依次重启docker、kubernetes
+		在master执行：
+			systemctl restart flanneld.service && systemctl enable flanneld.service
+			systemctl restart docker && systemctl restart kube-apiserver.service && systemctl restart kube-controller-manager.service && systemctl restart kube-scheduler.service
+		在node节点上执行：
+			systemctl restart flanneld.service && systemctl enable flanneld.service
+			systemctl restart docker && systemctl restart kubelet.service && systemctl restart kube-proxy.service
+		
+
+
+
+
+
+
+
+<property>
+	<name></name>
+	<value></value>
+</property>
