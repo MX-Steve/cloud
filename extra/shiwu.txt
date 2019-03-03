@@ -1,0 +1,162 @@
+第七章  事务
+1. 目的：事务会把数据库从一种一致状态转为另一种状态。在数据库提交工作时，可以确保其要么所有的修改都已经保存了，那么所有修改都不保存。
+    ACID特性
+		原子性	atomicity
+			不可分割，要么都成功，那么都撤回
+		一致性	consistency
+			将数据库从一种状态转变为下一种一致的状态。在事务开始之前和事务结束后，数据库的完整性约束没有被破坏
+		隔离性	isolation
+			一个事务的影响在该事务提交前对其他事务都不可见——这通过[锁]来实现
+		持久性	durability
+			事务一旦提交，其结果就是永久性的。及时发生宕机等故障、数据库也能将数据恢复
+2. 事务的实现
+	1.redo
+		在innodb存储引擎中，事务日志通过重做redo日志文件和innodb存储引擎的日志缓存innodb log buffer来实现。
+		LSN
+			innodb_flush_log_at_trx_commit=1
+		WAL：预写日志格式
+		innodb存储引擎通过预写日志的方式来保证事务的完整性。
+		磁盘上存储的数据页和内存缓冲池中的页是不同步的，对于内存缓冲池中页的修改，先是写入重做日志文件，然后再写入磁盘，因此是一种异步方式。
+		在一个事务中从日志缓冲刷新到重做日志文件，并不只是在事务提交时发生，每秒都会有从日志缓冲刷新到重做日志文件的动作。
+	2.undo
+		对于数据库进行修改时，数据库不但会产生redo，而且还会产生一定量的undo，即使你执行的事务或语句由于某种原因失败了，或者如果你用一条rollback语句请求回滚，就可以利用这些undo信息将数据回滚到修改之前的样子。
+		redo存放在重做日志文件中，undo存放在数据库内部的一个特殊段segment中，这称为undo段，undo段位于共享表空间内。
+		undo可以使用py_innodb_page_info.py工具，查看当前共享表空间中undo的数量：
+		python py_innodb_page_info.py /usr/local/mysql/data/ibdata1
+			udo log page: 2222
+		innodb存储引擎回滚时，它实际做的是与先前相反的工作，对于每个insert，innodb存储引擎会完成一个delete，对于每个delete，innodb存储引擎会执行一个insert，对于update，会执行相反的update，将修改前的行放回去。
+
+3. 事务控制语句
+			1.start transaction | begin：显示地开启一个事务
+				start transaction 和 begin都是显示地开启一个事务。但是在存储过程中，MySQL分析会自动将begin识别为begin...end。因此在存储过程中，只能使用start transaction来启动事务。
+			2.commit：或者commit work，提交你的事务，并使得已对数据库做的所有修改称为永久性的。
+				commit和commit work 语句基本是一致的，都是用来提交事务。不同之处在于，commit work用来控制事务结束后的行为，是chain还是release的。 可以通过参数completion_type来进行控制， 
+				默认情况下该参数为0，表示没有任何操作。在这种操作下，commit 和 commit work是完全等价的。
+				当参数completion_type的值为1时，  commit work等同于commit and chain，表示马上自动开启一个相同隔离级别的事务。 
+				当参数completion_type为2时，commit work 等同于commit and release，当事务提交后会自动断开与服务器的连接。
+			3.rollback：或者rollback work ：回滚会结束你的事务，并撤销正在进行的所有未提交的修改。
+				rollback/rollback work 和commit/commit work 类似
+			4.savepoint identifier：savepoint允许你在事务中创建一个保存点，一个事务中可以有多个savepoint。
+				savepoint记录了一个保存点，可以通过rollback to savepoint回滚到某个保存点，但是如果回滚到一个不存在的保存点，会抛出异常。
+				mysql> begin;
+				mysql>rollback to savepoint t1;
+				ERROR 1305:savepoint t1 does not exist
+				rollback to savepoint，虽然有rollback，但是他并不是真正地结束一个事务，因此即使执行了rollback to savepoint，之后也需要显示地运行commit或者rollback命令。
+				例子
+				mysql>create table t(a int , primary key(a))engine=innodb;
+				mysql>begin;
+				mysql>insert into t select 1;
+				mysql>savepoint t1;
+				mysql>insert into t select 2;
+				mysql>savepoint t2;
+				mysql>release savepoint t1;
+				mysql>insert into t select 2;
+				ERROR 1062:duplicate entry 2 for key primary
+				mysql>rollback to savepoint t2;
+				mysql>select * from t;
+				1和2两条数据都有
+				mysql>rollback;
+				select * from t;
+				空的
+				
+			5.release savepoint identifier：删除一个事务的保存点，当没有一个保存点执行这句语句时，会抛出一个异常。
+			6.rollback to [savepoint] idnetifier ：这个语句与savepoint命令一起使用。可以把事务回滚到标记点，而不回滚在此标记之前的任何工作。
+			7.set transaction：这个语句用来设置事务的隔离级别。事务隔离级别有：read uncommitted 、 read committed 、repeatable read  、 serializable
+			
+4.隐式提交的SQL语句：			
+			以下这些SQL语句会产生一个隐式的提交操作，即执行完这些语句后，会有一个隐式的commit操作。
+				DDL语句：
+					alter database...upgrade data directory name  /  alter event  / alter procedure  /  alter table   /   alter view  /  create database  /  create  event  / create  index  /   create  procedure  /  create table  / create trigger  /  create view  / drop database /  dro pevent  / drop index  / drop procedure  / drop table  /  drop  trigger / drop view  /  rename  table  /  truncate table 
+				用来隐式的修改MySQL架构的操作：
+					create user  ,   drop user  ,   grant  ,   rename user  ,   revoke  ,   set password
+				管理语句
+					analyze table  /  cache index  /  check table  /  load index  into cache  /  optimize table  /  repair table
+				注意：truncate table 语句是ddl，因此虽然和delete整张表的结果是一样的，但他是不能被回滚的。
+			
+5. 对于事务操作的统计：
+			每秒事务处理能力TPS： (com_commit+com_rollback) / time。但是这种方式计算的前提是：所有的事务必须是显示提交的，如果存在隐式的提交和回滚(默认是autocommit=1),，不会计算到com_commit和com_rollback变量中。
+			查看方式：show global status like "com_commit";
+			
+6. 事务隔离级别：（四种）
+		read uncommitted
+			称为浏览访问，仅仅只对事务而言的。
+		read committed
+			称为游标稳定
+		repeatable read
+			是2.9999的隔离，没有幻读的保护
+			innodb存储引擎默认的支持隔离级别，在这种隔离级别下，使用next-key lock锁的算法，因此避免了幻读的产生。
+			所以innodb存储引擎在默认repeatable read 事务隔离级别下已经能完全保证事务的隔离性要求，即达到了SQL标准的serializable隔离级别
+		serializable
+			称为隔离，或3 。 SQL 和 SQL2的标准的默认事务隔离级别是serializable
+		隔离级别越低，事务请求的锁越少，或者保持锁的时间就越短。这也是为什么大多数数据库系统默认的事务隔离级别是read committed.
+		命令：
+			SET [GLOBAL | SESSION] TRANSACTION ISOLATION LEVEL
+			{
+				READ uncommitted
+				| READ committed
+				| repeatable read
+				| serializable
+			}
+		如果想在MySQL库启动时就设置事务的默认隔离级别，需要修改MySQL配置文件：
+			[mysqld]
+			transaction-isolation=read-committed
+		因为innodb存储引擎在repeatable read隔离级别下就可以达到3的隔离，所以一般不在本地事务中使用serialiable的隔离级别，serialiable的事务隔离级别主要用于innodb 存储引擎的分布式事务。
+		即使不适用read committed 的事务隔离级别，也应该考虑将二进制日志的格式更换成ROW，因为这个格式记录的是行的变更，而不是简单的sql语句，因此可以避免一些不同步现象的产生。
+
+7. 分布式事务：
+	innodb 存储引擎支持XA事务，通过XA事务可以来支持分布式事务的实现。 分布式事务指的是允许多个独立的事务资源参与一个全局的事务中。 事务资源通常是关系型数据库系统，但也可以是其他类型的资源。 全局事务要求在其中所有参与的事务要么都提交，要么都回滚，这对于事务原有的ACID要求又有了提高。另外，在使用分布式事务时，innodb存储引擎的事务隔离级别必须设置为serializable***
+	分布式事务可能在银行系统转账中比较常见。
+	分布式事务由一个或者多个资源管理器，一个事务管理器，以及一个应用程序组成。
+		资源管理器：提供访问事务资源的方法。通常一个数据库就是一个资源管理器
+		事务管理器：协调参与全局事务中的各个事务。需要和参与全局事务中的所有资源管理器进行通信。
+		应用程序：定义事务的边界，指定全局事务中的操作。
+	在MySQL的分布式事务中，资源管理器就是MySQL数据库，事务管理器为连接到MySQL服务器的客户端。
+	参数innodb_support_xa可以查看是否启用了XA事务支持（默认是ON）
+	show variables like "innodb_support_xa"\G;
+8. 不好的事务习惯：
+	1.不要在循环中进行事务的提交。不管是显示提交还是隐式提交。
+		create procedure load3(count int unsigned)
+		begin
+		declare a int unsigned default 1;
+		declare c char(80) default repeat('a',80);
+		start transaction;
+		while a <= count do
+		insert into t1 select NULL,c;
+		set s=s+1;
+		end while;
+		commit;
+		end;
+	2.不要使用自动提交
+		MySQL数据库默认设置使用自动提交autocommit。修改
+		set autocommit=0不用自动提交功能
+		可以使用start transaction、begin来显示开启一个事务。显示开启事务后，在默认设置下，completion_type等于0
+		MySQL会自动执行set autocomit=0的命令，并在commit或者rollback结束一个事务后执行set autocommit=1；。
+		在不同的语言API中，自动提交时不同的。
+		在编写应用程序开发时，最好把事务的控制权交给开发人员，即在程序端进行事务的开始和结束。同时，开发人员必须了解到自动提交可能带来的问题。
+	3.不要使用自动回滚
+小结：
+	事务是数据库区别于文件系统的一个关键特性。
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+			
+		
+openstack-utils
+
+
+

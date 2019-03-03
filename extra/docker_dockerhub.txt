@@ -1,0 +1,53 @@
+1. docker hub界面登录--> create repository[私人仓库只能有一个] 
+2.安装docker[linux]，写demo
+	cat > Dockerfile <<EOF
+	FROM busybox
+	CMD echo "Hello world! This is my first Docker image."
+	EOF
+	]# docker login
+	username:
+	password:
+	docker build -t <your_username>/my-first-repo .
+	docker run <your_username>/my-first-repo
+	docker push <your_username>/my-first-repo 将Docker镜像推送到Docker Hub
+	在Docker Hub中，您的存储库应该latest在Tags下有一个新标签：
+3.库
+	1.创建存储库
+	2.将Docker容器映像推送到Docker Hub
+		docker build -t <hub-user>/<repo-name>[:<tag>]
+		docker tag <existing-image> <hub-user>/<repo-name>[:<tag>]
+		docker commit <existing-container> <hub-user>/<repo-name>[:<tag>]
+		docker push <hub-user>/<repo-name>:<tag>
+4.团队和组织
+	Docker Hub Organizations允许您创建团队，以便您的团队可以访问共享的镜像存储库。
+	组织是可以一起管理的团队和存储库的集合。
+	团队是属于您组织的Docker Hub用户组。
+	1.创建组织
+		Organizations --> create Organization --> 填写自己组织的信息
+		你创建了一个组织。你会看到你有一个团队，业主团队只有一个成员（你！）
+	2.业主团队
+		该业主队是一支特殊的团队，已经完全进入到组织中的所有存储库。
+			管理组织设置和结算
+			创建团队并修改任何团队的成员资格
+			访问和修改属于组织的任何存储库
+	3.创建团队
+		1.单击创建团队
+		2.填写您团队的信息，然后单击“ 创建”
+		3.将成员添加到团队中
+			组织 > 您的组织 > 您的团队名称 > 添加用户 [提供用户的Docker ID用户名或电子邮件，以将其添加到团队]
+		4.给用户授权
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+

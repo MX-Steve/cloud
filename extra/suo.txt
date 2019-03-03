@@ -1,0 +1,242 @@
+innodb存储引擎中的锁：
+	锁是数据库系统区别于文件系统的一个关键特征。锁机制用于管理对共享资源的并发访问，提供数据的完整性和一致性。
+	提供一致性的非锁定读、行级锁支持，行级锁没有相关开销，可以同时得到并发性和一致性
+	类型：
+		共享锁：允许事务读一行数据。当一个事务获得了行的共享锁，那么另一个事务可以立即获得该行的共享锁，称为锁兼容。但是如果有事务想要获得该行的排它锁，则它必须等待事务释放该行上的共享锁，称为锁不兼容。
+		排它锁：允许事务删除或者更新一行数据。
+	innodb存储引擎支持多粒度锁定，允许在行级上的锁和表级上的锁同时存在。为了支持在不同粒度上进行加锁操作，innodb存储引擎支持一种额外的锁方式，称为意向锁。意向锁是表级别的锁。
+		意向锁类型：
+			意向共享锁：事务想要获得某几行的共享锁。
+			意向排它锁：事务想要获得某几行的排它锁。
+	查看当前<请求锁>的信息：show engine innodb status\G;
+		*************************** 1. row ***************************
+		Type: InnoDB
+		Name: 
+		Status: 
+		=====================================
+		...  ...
+		TRANSACTIONS
+		------------
+		Trx id counter 246966  #事务ID计数器
+		Purge done for trx's n:o < 246964 undo n:o < 0 state: running but idle
+		History list length 42
+		LIST OF TRANSACTIONS FOR EACH SESSION:  # 每一个会话的事务列表
+		---TRANSACTION 421733417695056, not started
+		0 lock struct(s), heap size 1136, 0 row lock(s)
+		--------
+		
+		BUFFER POOL AND MEMORY
+		----------------------
+		Total large memory allocated 137428992
+		Dictionary memory allocated 550392
+		Buffer pool size   8191
+		Free buffers       6446
+		Database pages     1448
+		Old database pages 514
+		Modified db pages  0
+		Pending reads      0
+		Pending writes: LRU 0, flush list 0, single page 0
+		Pages made young 0, not young 0
+		0.00 youngs/s, 0.00 non-youngs/s
+		Pages read 708, created 740, written 3858
+		0.00 reads/s, 0.00 creates/s, 0.00 writes/s
+		No buffer pool page gets since the last printout
+		Pages read ahead 0.00/s, evicted without access 0.00/s, Random read ahead 0.00/s
+		LRU len: 1448, unzip_LRU len: 0
+		I/O sum[0]:cur[0], unzip sum[0]:cur[0]
+		--------------
+		ROW OPERATIONS
+		--------------
+		0 queries inside InnoDB, 0 queries in queue
+		0 read views open inside InnoDB
+		Process ID=25315, Main thread ID=140258141075200, state: sleeping
+		Number of rows inserted 140, updated 400915, deleted 36, read 601535
+		0.00 inserts/s, 0.00 updates/s, 0.00 deletes/s, 0.00 reads/s
+		----------------------------
+		END OF INNODB MONITOR OUTPUT
+		============================
+innodb存储引擎默认设置下，非锁定读的机制大大提高了数据读取的并发性，即读取不会占用和等待表上的锁。
+	一个行可能有不止一个快照数据。我们称这种技术为行多版本技术。
+	事务隔离级别：可以使用select @@tx_isolation;查看当前mysql的事务隔离级别
+		read committed
+			非一致性读总是读取被锁定行的最新一份快照
+			从数据库理论的角度看，其实违反了事务ACID中I的特性，即隔离性。
+			Time			Session A											Session B
+				|			begin;
+				|			select * from parent where id=1;
+				|																	begin;
+				|																	update parent set id=3 where id=1;
+				|			select * from parent where id=1; [read committed隔离级别下此处就没有数据了]
+				|																	commit;
+				|			select * from parent where id = 1;[repeatable read 仍然可以看到数据，只有提交后开启新的事务才看不到]
+				V			commit;
+		repeatable read
+			非一致性读总是读取事务开始时的行数据版本
+	innodb对select语句支持两种加锁操作：
+		select ... for update
+			对读取的行记录加一个X（排它锁）锁。其他事务想在这些行上加任何锁都会被阻塞。
+		select ... lock in share mode 
+			对读取的行记录加一个S（共享锁）锁。其他事务可以向被锁定的记录加S锁，但是对于加X锁，则会被阻塞。
+		当事务提交了，锁也就释放了。
+自增长和锁
+		对每个含有自增长值得表都有一个自增长计数器（auto-increment counter）
+		得到计数器的值：
+			select max(auto_inc_col) from t for update;
+		AUTO-INC Locking:插入操作会依据这个自增长的计数器值加1赋予自增长列
+			这个一种特殊的表锁机制，该锁会在完成对自增长值插入的SQL语句后立即释放。
+			问题：
+				并发性能较差，必须等待前一个插入的完成。
+				对于INSERT ... SELECT 的大数据量的插入，会影响插入的性能，因为另一个事务中的插入会被阻塞。
+			innodb_autoinc_lock_mode 默认值为1
+				取值为0:5.1.22之前自增长的实现方式
+				取值为1：默认值，
+		自增长插入分类：
+			INSERT-like：
+				指的是所有的插入语句。如insert , replace, insert...select , replace...select, load data等。
+			Simple inserts：
+				指的是能在插入前就确定插入行数的语句。如insert , replase。
+			Bulk inserts：
+				指的是插入前不能确定得到插入行数的语句，如insert...select, replace...select, load data。
+			Mixed-mode inserts：
+				指的是插入中有一部分的值是自增长的，有一部分是确定的。如insert into t1 (c1,c2) values(1,'a'),(NULL,'b'),(5,'c');
+		在innodb存储引擎下，自增长值得列必须是索引，并且是索引的第一个列，如果是第二个列则会报错，而myisam存储引擎则没有这个问题。
+
+外键和锁
+	外键主要用于引用完整性的约束检查。在innodb存储引擎中，对于一个外键咧，如果没有显式地对这个列加索引，innodb存储引擎自动对其加一个索引，因为这样可以避免表锁。
+	对于外键值的插入或者更新，首先需要查询父表中的记录，但是对于父表的select操作，不是使用一致性非锁定读的方式，因为这样会发生数据不一致的问题，因此这时使用的是select...lock  in share mode 方式，主动对父表加一个S锁。如果这时父表上已经这样加X锁，那么字表的操作会被阻塞。
+	
+锁的算法
+	innodb存储引擎有3个行锁的算法设计
+		record lock：单个行记录上的锁
+			总是会去锁住索引记录。如果innodb存储引擎表简历的时候没有设置任何一个索引，这时innodb存储引擎会使用隐式的主键来进行锁定。
+		gap lock：间隙锁，锁定一个范围，但不包括记录本身
+		next-key lock：gap lock + record lock ，锁定一个范围，并且锁定记录本身
+			以上两种算法的结合体，innodb对于行的查询都是采用这种锁定算法。对于不同SQL查询语句，可能设置共享的（share） next-key lock 和排它锁(exclusive) next-key lock。
+	在innodb的默认配置下，即事务的隔离级别为repeatable read 的模式下。因为在repeatable read 模式下，next-key lock算法是默认的行记录锁定算法。
+	例子：
+		mysql> create table t (a int, primary key(a)) engine=innodb;
+		mysql> begin;
+		mysql> insert into t select 1;
+		mysql> insert into t select 2;
+		mysql> insert into t select 3;
+		mysql> insert into t select 4;
+		mysql> insert into t select 7;
+		mysql> insert into t select 8;
+		mysql> commit;
+		
+		time			Session A 																		Session B
+			|				begin;
+			|				select * from t where a < 6 lock in share mode;			begin;
+			|																									insert into t select 5;
+			V																									(blocking阻塞中)
+		因为在next-key lock算法下，锁定的是(-无穷, 6)这个数值区间的所有数值，插入不在这个范围的数据就可以，如9
+		time			Session A 																		Session B
+			|				begin;
+			|				select * from t where a < 6 lock in share mode;			begin;
+			|																									insert into t select 9;
+			V																									（success）			
+		
+4.锁问题：
+	锁只会带来3中问题。如果可以防止这3种情况的发生，那将不会产生并发异常。
+	1.丢失更新
+		出现下面的情况时，就会发生丢失更新：
+		（1） 事务T1查询一行数据，放入本地内存，并显示给一个终端用户User1
+		（2） 事务T2也查询该行数据，并将得到的数据给一个终端用户User2
+		（3）User1修改这行记录， 更新数据库并提交
+		（4）User2修改这行记录， 更新数据库并提交
+		要避免丢失更新发生，其实需要让这种情况下的事务变成串行操作，而不是并发的操作。
+		即在上述四种的第1中情况下，对用户读取的记录加上一行排它锁，同样，发生第2种情况下的操作时，用户也需要加一个排它锁这种情况下，第2步就必须等待第1,3步完成，最后完成第4步。
+		time					Session A 										Session B
+		   |					begin;
+		   |					select cash into @cash from 
+		   |					account where user=pUser for			begin;
+		   |					update;											select cash into @cash from 
+		   |																			account where user=pUser for 
+		   |																			update;
+		   |					update account set cash=@cash
+		   |					-9000  where user=pUser;
+		   |					commit;											update account set cash=@cash-1
+		   |																			where user=pUser;
+		   |																			commit;
+		  V
+		丢失更新是程序员最容易犯的错误，也是最不容易发现的一个错误，特别是由于这种现象只是随机的、零星的出现，但是其可能造成的后果却十分严重。
+	2.	脏读
+			脏数据：一个事务读到另一个事务修改或者写入但是为commit提交的数据称为脏数据
+			脏页：事务从磁盘中将页读入到内存，然后修改内存中的页，该页还没有同步写入到磁盘中，称为脏页。因为磁盘写入是异步的，脏页也是提高了性能，是允许的。
+			脏读：就是读到了一些脏数据，这违反了事务的隔离性
+			在生产环境中并不常发生。脏读的条件是需要事务的隔离级别为read uncommitted，而目前绝大多数都设置成了read committed 。innodb存储引擎默认的事务隔离级别为 read repeatable 。
+	3.不可重复读
+			是指一个事务内多次读同一数据。在这个事务还没有结束时，另一个事务也访问该数据。那么，在第一个事务的两次读数据之间，由于第二个事务的修改，第一个事务两次读到的数据可能是不一样的。这样就发生了在一个事务内两次读到的数据是不一样的，因此称为不可重复读。
+			不可重复读和脏读的区别：脏读是读到未提交的数据，而不可重复读却是读到已经提交的数据，但是其违反了数据库事务一致性的要求。
+			innodb存储引擎中，通过使用next-key lock算法来避免不可重复读的问题。在next-key lock 算法下，对于索引的扫描，不仅仅是锁住扫描到的索引，而且还锁住这些索引覆盖的范围（gap）。因此对于这个范围内的插入都是不允许的。这样就避免了另外的事务在这个范围内插入数据导致的不可重复读的问题。因此，innodb存储引擎的默认事务隔离级别是read repeatable，采用next-key lock算法，就避免了不可重复读的现象。
+			
+阻塞：
+			因为不同锁之间的兼容性关系，所以在有些时刻，一个事务中的锁需要等待另一个事务中的锁释放它所占用的资源。
+			阻塞并不是一件坏事，阻塞是为了保证事务可以并发并且正常运行。
+			在innodb存储引擎中，参数innodb_lock_wait_timeout用来控制等待的时间（50s），innodb_rollback_on_timeout用来设定是否在等待超时时对进行中的事务进行回滚操作（默认是off，代表不回滚）
+			innodb_lock_wait_timeout是动态的，可以在MySQL数据库运行时进行调整，而innodb_rollback_on_timeout是静态的，不可在启动时进行修改。
+			> set @@innodb_lock_wait_timeout=60; -->ok
+			> set @@innodb_rollback_on_timeout=on; -->error
+			问题：
+				Session A:
+				mysql> begin;
+				mysql> select * from testdb.e1 where id < 5 for update;   --> 加了一个X锁（排它锁）
+				
+				Session B:
+				mysql> begin;
+				mysql> insert into e1 select 11,'bbb';    -->理论上这一步会成功，但是没有成功
+				ERROR 1205 (HY000): Lock wait timeout exceeded; try restarting transaction
+				mysql> insert into e1 select 4,'bbb';
+				ERROR 1205 (HY000): Lock wait timeout exceeded; try restarting transaction
+				innodb存储引擎默认隔离级别为repeatable-read，可以使用 select @@tx_isolation查看，使用的算法是next-key lock.
+				next-key lock 算法下锁定了小于5的所有记录，但是，B插入超过5的仍然需要等待，难道此处next-key lock锁了全表，导致全表都无法插入？
+				解决：由于InnoDB预设是Row-Level Lock，所以只有「明确」的指定主键，MySQL才会执行Row lock (只锁住被选取的资料例) ，否则MySQL将会执行Table Lock (将整个资料表单给锁住)。
+
+死锁：
+	如果程序是串行的，那么不可能发生死锁。死锁只发生于并发的情况，数据库就是一个并发进行着的程序，因此可能会发生死锁。
+	innodb存储引擎有一个后台的锁监控线程，该线程负责查看可能的死锁问题，并自动告知用户。
+	下面的操作演示了死锁的一种经典的情况，即A等待B，B在等待A：
+	注意：由于InnoDB预设是Row-Level Lock，所以只有「明确」的指定主键，MySQL才会执行Row lock (只锁住被选取的资料例) ，否则MySQL将会执行Table Lock (将整个资料表单给锁住)。
+	Time						Session A														Session B
+	  |                          begin;
+	  |							 select * from tt where id=1 for update;   	 begin;
+	  |							  ok[数据可以查看]										 	 select * from tt where id=2 for update;
+	  |																							 	 ok[数据可以查看]
+	  |							   select * from tt where id=2 for update; 
+	  |							   ERROR 1205 (HY000): Lock wait timeout 
+	  |								exceeded; try restarting transaction
+	  |																							  	 select * from tt where id=1 for update;
+	  |																							  	 ERROR 1213 (40001): Deadlock found when trying to get lock; 
+	  |																							  	 try restarting transaction
+			
+		在上述操作中，会话中的事务抛出1213错误，即发生了死锁。死锁原因是两个会话互相等待。大多数的死锁innodb存储自己可以侦测到，不需要认为进行干预。innodb存储引擎不会回滚大部分的错误异常，但是死锁除外。发现死锁后，innodb存储引擎会马上回滚一个事务，这点事需要注意的。如果在应用程序中捕获1213这个错误，其实并不需要对其进行回滚。
+
+锁升级
+	锁升级lock escalation 是指将当前锁的粒度降低。例如，数据库可以把一个表的1000个行锁升级为一个页锁，或者将页锁升级为表锁。如果数据库的设计中认为锁是一种稀有资源，而且想避免锁的开销，那数据库中会频繁出现锁升级现象。
+		sql server一个对象上持有的锁数量超过阈值时，会升级。如果是不同对象的话，则不会发生升级
+		innodb存储引擎不存在锁升级的问题。在innodb存储引擎中。1个锁的开销与1000000个锁是一样的，都没有开销。
+理解innodb存储引擎锁的特性，对于开发一个高性能、高并发的数据库应用显得十分重要和有帮助。
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+			
+			
+			
+			
+			
+			
+			
+			
+			

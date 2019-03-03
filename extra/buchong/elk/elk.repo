@@ -1,0 +1,5 @@
+[elk]
+name=elk
+baseurl=ftp://192.168.1.254/elk
+enabled=1
+gpgcheck=0
