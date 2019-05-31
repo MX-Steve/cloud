@@ -1,0 +1,26 @@
+1.找一台机器做pxe服务器
+步骤1：
+	1.安装dhcp
+		yum -y install dhcp
+	2.删除dhcp主配置文件,将当前dhcpd.conf拷贝到pxe服务器dhcp目录
+		rm -rf /etc/dhcp/dhcpd.conf
+		cp dhcpd.conf /etc/dhcp/dhcpd.conf
+	3.启动dhcp
+		systemctl restart dhcpd
+		systemctl enable dhcpd
+步骤2：
+	1.安装tftp
+		yum -y install tftp-server
+	2.将tftp.tar.gz解压到/var/lib/tftp目录
+		tar -xf tftp.tar.gz -C /var/lib/tftpboot
+	3.启动tftp
+		systemctl restart tftp
+		systemctl enable tftp
+步骤3
+	可不做，搭建ftp，真机已经做好
+	将ks.cfg 拷贝到真机的/var/ftp/目录下
+步骤4
+	安装测试
+	装机测试
+	注意： 内存大小一定要大于等于2048M
+
