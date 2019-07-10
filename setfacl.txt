@@ -1,0 +1,5 @@
+setfacl
+    setfacl -R -m g:admins:rwX /mnt/aa
+    #如果这个文件或目录有x权限,admins组对它就有x权限，没有，则无
+    setfacl -R -m d:admins:rwX /mnt/aa
+    d设置默认ACL(default),以后在该目录下创建的新目录和文件，都自己有acl权限
